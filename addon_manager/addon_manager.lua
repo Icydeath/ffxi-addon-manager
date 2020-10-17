@@ -1,7 +1,11 @@
 _addon.name = 'addon_manager'
 _addon.author = 'Icy'
-_addon.version = '1.0.0.0'
+_addon.version = '1.0.0.1'
 _addon.commands = {'addon_manager','addonmanager'}
+
+--[[
+	1.0.0.1: adjusted 'load by zone' logic. Fixed debug_mode logic.
+]]
 
 require('logger')
 require('tables')
@@ -86,9 +90,9 @@ local plugin_command = 'load '
 local force = false
 local jobs = nil
 local zones = nil
+local last_loaded_addons = S{}
 
 function parse_autoload()
-	--local list = S{}
 	local list = T{}
 	list.addons = S{}
 	list.plugins = S{}
@@ -140,7 +144,7 @@ function load_global_addons(unload)
 		plugin_command = 'unload '
 	end
 	
-	if debug_mode then log('GLOBAL') end
+	if settings.debug_mode then log('GLOBAL') end
 	if settings.global_addons and settings.global_addons:length() > 0 then
 		for i, name in pairs(settings.global_addons:split(',')) do
 			if not tonumber(name) and not is_autoloaded(name) then
@@ -165,7 +169,7 @@ function load_global_addons(unload)
 end
 
 function load_player_addons(unload)
-	if debug_mode then log('PLAYER') end
+	if settings.debug_mode then log('PLAYER') end
 	
 	if settings.player_addons[player_name] and settings.player_addons[player_name]:length() > 0 then
 		for i, name in pairs(settings.player_addons[player_name]:split(',')) do
@@ -187,9 +191,9 @@ function load_player_addons(unload)
 end
 
 function load_zone_addons(zone_name, unload)
-	if debug_mode then log('BY ZONE') end
+	if settings.debug_mode then log('BY ZONE') end
 	
-	if settings.by_zone then 
+	if settings.by_zone then
 		for i, entry in pairs(settings.by_zone) do
 			if entry.zone_names:contains(zone_name) and not entry.ignore:contains(player_name) then
 				if entry.addons and entry.addons:length() > 0 then
@@ -214,8 +218,24 @@ function load_zone_addons(zone_name, unload)
 	end
 end
 
+function get_zones_addons(zone_name)
+	local list = S{}
+	for i, entry in pairs(settings.by_zone) do
+		if entry.zone_names:contains(zone_name) and not entry.ignore:contains(player_name) then
+			if entry.addons and entry.addons:length() > 0 then
+				for i, name in pairs(entry.addons:split(',')) do
+					if not tonumber(name) and not is_autoloaded(name) and not settings.global_addons:contains(name) then
+						list:add(name)
+					end
+				end
+			end
+		end
+	end
+	return list
+end
+
 function load_job_addons(job, unload)
-	if debug_mode then log('BY JOB') end
+	if settings.debug_mode then log('BY JOB') end
 	
 	if settings.by_job[job] then 
 		if settings.by_job[job].addons and settings.by_job[job].addons:length() > 0 then
@@ -239,7 +259,7 @@ function load_job_addons(job, unload)
 end
 
 function load_autoload_items()
-	if debug_mode then log('WINDOWERS AUTOLOAD') end
+	if settings.debug_mode then log('WINDOWERS AUTOLOAD') end
 	if autoload.addons then
 		for i, name in pairs(autoload.addons) do
 			run_command(addon_command..name)
@@ -296,7 +316,7 @@ function init()
 end
 
 function run_command(cmd)
-	if debug_mode then log('\t', cmd) end
+	if settings.debug_mode then log('\t', cmd) end
 	windower.send_command(cmd)
 	coroutine.sleep(.2)
 end
@@ -327,8 +347,8 @@ windower.register_event('addon command', function(...)
 		plugin_command = 'reload '
 		init()
 	elseif commands[1] and commands[1] == 'debug' or commands[1] == 'debugmode' then
-		debug_mode = not debug_mode
-		log('DEBUG MODE:', debug_mode)
+		settings.debug_mode = not settings.debug_mode
+		log('DEBUG MODE:', settings.debug_mode)
 	end
 end)
 
@@ -340,10 +360,28 @@ windower.register_event('job change', function(main_job_id, main_job_level, sub_
 end)
 
 windower.register_event('zone change', function(new_id, old_id)
-	load_zone_addons(current_zone, true)
-	
+	local old_zone = get_zone_name(old_id)
 	current_zone = get_zone_name(new_id)
-	load_zone_addons(current_zone)
+	--load_zone_addons(old_zone, true)
+	local old_zones_addons = get_zones_addons(old_zone)
+	local load_addons = S{}
+	for cname in pairs(get_zones_addons(current_zone)) do
+		if old_zones_addons:contains(cname) then
+			old_zones_addons:remove(cname) -- remove it so it doesn't get unloaded
+		elseif not old_zones_addons:contains(cname) then
+			load_addons:add(cname) -- add it to be loaded
+		end
+	end
+	
+	-- unload the addons from previous zone
+	for uname in pairs(old_zones_addons) do
+		run_command('lua unload '..uname)
+	end
+	
+	-- load addons from the load_addons list that was built
+	for lname in pairs(load_addons) do
+		run_command('lua load '..lname)
+	end
 end)
 
 windower.register_event('load', function()
@@ -362,6 +400,8 @@ windower.register_event('load', function()
 	end
 	
 	current_zone = get_zone_name(windower.ffxi.get_info().zone)
+	load_zone_addons(current_zone)
+	
 	res = nil
 end)
 
@@ -372,5 +412,5 @@ end)
 windower.register_event('logout', function()
 	load_zone_addons(current_zone, true)
 	load_job_addons(get_job_shortname(current_job_id), true)
-	load_global_addons(true)
+	--load_global_addons(true)
 end)
