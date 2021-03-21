@@ -1,9 +1,10 @@
 _addon.name = 'addon_manager'
 _addon.author = 'Icy'
-_addon.version = '1.0.0.1'
-_addon.commands = {'addon_manager','addonmanager'}
+_addon.version = '1.0.0.2'
+_addon.commands = {'addon_manager','addonmanager','amgr'}
 
 --[[
+	1.0.0.2: added help command.
 	1.0.0.1: adjusted 'load by zone' logic. Fixed debug_mode logic.
 ]]
 
@@ -51,7 +52,7 @@ defaults = {
 		},
 	},
 	
-	-- job specific addons for everyone, unless specified the player is specified in the ignore list.
+	-- job specific addons for everyone, you can add player names to the [ignore] section to prevent loading the jobs addons.
 	by_job = T{ 
 		war = { addons = S{'autows',}, plugins = S{'',}, ignore = S{'',} },
 		whm = { addons = S{'',}, plugins = S{'',}, ignore = S{'',} },
@@ -234,6 +235,22 @@ function get_zones_addons(zone_name)
 	return list
 end
 
+function get_zones_plugins(zone_name)	
+	local list = S{}
+	for i, entry in pairs(settings.by_zone) do
+		if entry.zone_names:contains(zone_name) and not entry.ignore:contains(player_name) then
+			if entry.plugins and entry.plugins:length() > 0 then
+				for i, name in pairs(entry.plugins:split(',')) do
+					if not tonumber(name) and not is_autoloaded(name, true) and not settings.global_plugins:contains(name) then
+						list:add(name)
+					end
+				end
+			end
+		end
+	end
+	return list
+end
+
 function load_job_addons(job, unload)
 	if settings.debug_mode then log('BY JOB') end
 	
@@ -335,12 +352,15 @@ end
 
 windower.register_event('addon command', function(...)
 	local commands = {...}
-	if commands[1] and commands[1] == 'reload' then
+	if commands[1] and commands[1] == 'reload' or commands[1] == 'r' then
 		settings = get_settings()
 		
 		force = false
 		if commands[2] and commands[2] == 'force' or commands[2] == 'f' then
 			force = true
+			log('force reloading settings and addons...')
+		else
+			log('reloading settings...')
 		end
 		
 		addon_command = 'lua reload '
@@ -348,7 +368,11 @@ windower.register_event('addon command', function(...)
 		init()
 	elseif commands[1] and commands[1] == 'debug' or commands[1] == 'debugmode' then
 		settings.debug_mode = not settings.debug_mode
-		log('DEBUG MODE:', settings.debug_mode)
+		log('DEBUG MODE:', settings.debug_mode and 'ON' or 'OFF')
+	elseif commands[1] and commands[1] == 'help' or commands[1] == 'h' then
+		log('//amgr (r)eload  <-- reloads the addons set in settings.xml')
+		log('//amgr (r)eload (f)orce <-- reloads the autoload addons and the addons set in settings.xml')
+		log('//amgr debug  <-- Toggles debug mode on/off')
 	end
 end)
 
@@ -362,7 +386,7 @@ end)
 windower.register_event('zone change', function(new_id, old_id)
 	local old_zone = get_zone_name(old_id)
 	current_zone = get_zone_name(new_id)
-	--load_zone_addons(old_zone, true)
+	
 	local old_zones_addons = get_zones_addons(old_zone)
 	local load_addons = S{}
 	for cname in pairs(get_zones_addons(current_zone)) do
@@ -381,6 +405,25 @@ windower.register_event('zone change', function(new_id, old_id)
 	-- load addons from the load_addons list that was built
 	for lname in pairs(load_addons) do
 		run_command('lua load '..lname)
+	end
+	
+	
+	local old_zones_plugins = get_zones_plugins(old_zone)
+	local load_plugins = S{}
+	for cname in pairs(get_zones_plugins(current_zone)) do
+		if old_zones_plugins:contains(cname) then
+			old_zones_plugins:remove(cname) -- remove it so it doesn't get unloaded
+		elseif not old_zones_plugins:contains(cname) then
+			load_plugins:add(cname) -- add it to be loaded
+		end
+	end
+	
+	for uname in pairs(old_zones_plugins) do
+		run_command('unload '..uname)
+	end
+	
+	for lname in pairs(load_plugins) do
+		run_command('load '..lname)
 	end
 end)
 
